@@ -23,56 +23,52 @@ async function main() {
     }
   });
 
-  const adminExists = await prisma.employee.findUnique({
+  const adminPasswordHash = await bcrypt.hash("Admin@123", 12);
+
+  await prisma.employee.upsert({
     where: {
       email: "admin@cafe.com"
+    },
+    update: {
+      name: "Cafe Admin",
+      passwordHash: adminPasswordHash,
+      role: Role.ADMIN
+    },
+    create: {
+      name: "Cafe Admin",
+      email: "admin@cafe.com",
+      passwordHash: adminPasswordHash,
+      role: Role.ADMIN
     }
   });
 
-if (!adminExists) {
-const adminPasswordHash = await bcrypt.hash("Admin@123", 12);
+  const staffPasswordHash = await bcrypt.hash("Staff@123", 12);
 
+  await prisma.employee.upsert({
+    where: {
+      email: "staff@cafe.com"
+    },
+    update: {
+      name: "Cafe Staff",
+      passwordHash: staffPasswordHash,
+      role: Role.CASHIER
+    },
+    create: {
+      name: "Cafe Staff",
+      email: "staff@cafe.com",
+      passwordHash: staffPasswordHash,
+      role: Role.CASHIER
+    }
+  });
 
-await prisma.employee.create({
-  data: {
-    name: "Cafe Admin",
-    email: "admin@cafe.com",
-    passwordHash: adminPasswordHash,
-    role: Role.ADMIN
-  }
-});
-
-
-}
-
-const staffExists = await prisma.employee.findUnique({
-where: {
-email: "staff@cafe.com"
-}
-});
-
-if (!staffExists) {
-const staffPasswordHash = await bcrypt.hash("Staff@123", 12);
-
-
-await prisma.employee.create({
-  data: {
-    name: "Cafe Staff",
-    email: "staff@cafe.com",
-    passwordHash: staffPasswordHash,
-    role: Role.CASHIER
-  }
-});
-
-
-}
+  console.log("Seed completed successfully.");
 }
 
 main()
-.catch((error) => {
-console.error("Seed failed:", error);
-process.exit(1);
-})
-.finally(async () => {
-await prisma.$disconnect();
-});
+  .catch((error) => {
+    console.error("Seed failed:", error);
+    process.exit(1);
+  })
+  .finally(async () => {
+    await prisma.$disconnect();
+  });
