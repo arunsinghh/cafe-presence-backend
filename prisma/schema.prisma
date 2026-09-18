@@ -1,0 +1,378 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  MANAGER
+  CASHIER
+  VERIFIER
+}
+
+enum Permission {
+  DASHBOARD_VIEW
+
+  CUSTOMER_VIEW
+  CUSTOMER_MANAGE
+
+  EMPLOYEE_VIEW
+  EMPLOYEE_MANAGE
+
+  VOUCHER_VIEW
+  VOUCHER_CREATE
+  VOUCHER_MANAGE
+  VOUCHER_REDEEM
+
+  PRESENCE_VIEW
+  PRESENCE_VERIFY
+  PRESENCE_MANAGE
+
+  PURCHASE_VIEW
+  PURCHASE_CREATE
+  PURCHASE_MANAGE
+
+  LOYALTY_VIEW
+  LOYALTY_MANAGE
+
+  CAFE_CONFIG_VIEW
+  CAFE_CONFIG_MANAGE
+
+  AUDIT_LOG_VIEW
+}
+
+enum CustomerStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  SUSPENDED
+}
+
+enum DeviceStatus {
+  PENDING
+  ACTIVE
+  REVOKED
+  LOST
+}
+
+enum QrStatus {
+  PENDING
+  CONSUMED
+  EXPIRED
+  REVOKED
+}
+
+enum PresenceMethod {
+  GPS
+  QR
+  GPS_QR
+}
+
+enum PresenceResult {
+  SUCCESS
+  FAILED
+  REJECTED
+}
+
+enum VoucherType {
+  PERCENTAGE
+  FIXED_AMOUNT
+  FREE_ITEM
+}
+
+enum VoucherStatus {
+  ACTIVE
+  EXPIRED
+  REDEEMED
+  REVOKED
+}
+
+enum RedemptionSessionStatus {
+  CREATED
+  SCANNED
+  OTP_VERIFIED
+  COMPLETED
+  EXPIRED
+  CANCELLED
+}
+
+model Employee {
+  id           Int      @id @default(autoincrement())
+  name         String
+  email        String   @unique
+  passwordHash String
+  role         Role
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  auditLogs                  AuditLog[]                 @relation("EmployeeAuditLogs")
+  permissions                EmployeePermission[]
+  scannedRedemptionSessions  VoucherRedemptionSession[] @relation("SessionScannedBy")
+  redeemedRedemptionSessions VoucherRedemptionSession[] @relation("SessionRedeemedBy")
+}
+
+model EmployeePermission {
+  id         Int        @id @default(autoincrement())
+  employeeId Int
+  permission Permission
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
+
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@unique([employeeId, permission])
+  @@index([employeeId])
+  @@index([permission])
+}
+
+model AuditLog {
+  id         Int      @id @default(autoincrement())
+  employeeId Int
+  action     String
+  entityType String?
+  entityId   String?
+  details    Json?
+  ipAddress  String?
+  userAgent  String?
+  createdAt  DateTime @default(now())
+
+  employee Employee @relation("EmployeeAuditLogs", fields: [employeeId], references: [id], onDelete: Restrict)
+
+  @@index([employeeId])
+  @@index([entityType, entityId])
+  @@index([createdAt])
+}
+
+model Customer {
+  id         Int            @id @default(autoincrement())
+  name       String
+  phone      String         @unique
+  email      String?        @unique
+  status     CustomerStatus @default(PENDING)
+  approvedAt DateTime?
+  rejectedAt DateTime?
+  createdAt  DateTime       @default(now())
+  updatedAt  DateTime       @updatedAt
+
+  devices          Device[]
+  consumedQrTokens DynamicQrToken[]     @relation("QrConsumedByCustomer")
+  presenceLogs     PresenceLog[]
+  loyaltyPoints    LoyaltyPoint[]
+  purchases        Purchase[]
+  customerVouchers   CustomerVoucher[]
+  notifications      NotificationStruct[]
+  redemptionSessions VoucherRedemptionSession[]
+}
+
+model Device {
+  id         Int          @id @default(autoincrement())
+  customerId Int
+  deviceId   String
+  deviceName String?
+  platform   String?
+  status     DeviceStatus @default(PENDING)
+  approvedAt DateTime?
+  revokedAt  DateTime?
+  lostAt     DateTime?
+  createdAt  DateTime     @default(now())
+  updatedAt  DateTime     @updatedAt
+
+  customer         Customer         @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  consumedQrTokens DynamicQrToken[] @relation("QrConsumedByDevice")
+  presenceLogs     PresenceLog[]
+
+  @@unique([customerId, deviceId])
+  @@index([customerId, status])
+}
+
+model CafeConfig {
+  id                   Int      @id @default(1)
+  cafeName             String
+  latitude             Float
+  longitude            Float
+  allowedRadiusMeters  Float
+  qrValiditySeconds    Int      @default(60)
+  qrRotationSeconds    Int      @default(30)
+  loyaltyPointsPerUnit Float    @default(1)
+  isPresenceEnabled    Boolean  @default(true)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+}
+
+model DynamicQrToken {
+  id                   Int       @id @default(autoincrement())
+  token                String    @unique
+  status               QrStatus  @default(PENDING)
+  expiresAt            DateTime
+  consumedAt           DateTime?
+  consumedByCustomerId Int?
+  consumedByDeviceId   Int?
+  createdAt            DateTime  @default(now())
+
+  consumedByCustomer Customer?     @relation("QrConsumedByCustomer", fields: [consumedByCustomerId], references: [id], onDelete: SetNull)
+  consumedByDevice   Device?       @relation("QrConsumedByDevice", fields: [consumedByDeviceId], references: [id], onDelete: SetNull)
+  presenceLogs       PresenceLog[]
+
+  @@index([status, expiresAt])
+  @@index([consumedByCustomerId])
+  @@index([consumedByDeviceId])
+}
+
+model PresenceLog {
+  id             Int            @id @default(autoincrement())
+  customerId     Int
+  deviceId       Int
+  method         PresenceMethod
+  latitude       Float?
+  longitude      Float?
+  accuracy       Float?
+  distanceMeters Float?
+  qrTokenId      Int?
+  purpose        String?
+  result         PresenceResult
+  timestamp      DateTime       @default(now())
+
+  customer Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  device   Device          @relation(fields: [deviceId], references: [id], onDelete: Restrict)
+  qrToken  DynamicQrToken? @relation(fields: [qrTokenId], references: [id], onDelete: SetNull)
+
+  @@index([customerId, timestamp])
+  @@index([deviceId, timestamp])
+  @@index([qrTokenId])
+}
+
+model LoyaltyPoint {
+  id          Int      @id @default(autoincrement())
+  customerId  Int
+  points      Int
+  balance     Int
+  type        String
+  description String?
+  referenceId String?
+  createdAt   DateTime @default(now())
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([customerId, createdAt])
+}
+
+model Purchase {
+  id           Int      @id @default(autoincrement())
+  customerId   Int
+  amount       Decimal  @db.Decimal(12, 2)
+  pointsEarned Int      @default(0)
+  description  String?
+  referenceNo  String?  @unique
+  purchasedAt  DateTime @default(now())
+  createdAt    DateTime @default(now())
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Restrict)
+
+  @@index([customerId, purchasedAt])
+}
+
+model Voucher {
+  id             Int           @id @default(autoincrement())
+  code           String        @unique
+  name           String
+  description    String?
+  type           VoucherType
+  value          Decimal?      @db.Decimal(12, 2)
+  maxRedemptions Int?
+  redeemedCount  Int           @default(0)
+  startsAt       DateTime?
+  expiresAt      DateTime?
+  status         VoucherStatus @default(ACTIVE)
+  imageUrl       String?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  customerVouchers   CustomerVoucher[]
+  redemptionSessions VoucherRedemptionSession[]
+}
+
+model CustomerVoucher {
+  id         Int           @id @default(autoincrement())
+  customerId Int
+  voucherId  Int
+  status     VoucherStatus @default(ACTIVE)
+  issuedAt   DateTime      @default(now())
+  redeemedAt DateTime?
+  expiresAt  DateTime?
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
+
+  customer           Customer                   @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  voucher            Voucher                    @relation(fields: [voucherId], references: [id], onDelete: Cascade)
+  redemptionSessions VoucherRedemptionSession[]
+
+  @@unique([customerId, voucherId])
+  @@index([customerId, status])
+  @@index([voucherId, status])
+}
+
+model NotificationStruct {
+  id         Int       @id @default(autoincrement())
+  customerId Int
+  title      String
+  message    String
+  type       String?
+  isRead     Boolean   @default(false)
+  readAt     DateTime?
+  createdAt  DateTime  @default(now())
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([customerId, isRead, createdAt])
+}
+
+model VoucherRedemptionSession {
+  id                   Int                     @id @default(autoincrement())
+  sessionToken         String                  @unique
+  customerId           Int
+  customerVoucherId    Int
+  voucherId            Int
+  status               RedemptionSessionStatus @default(CREATED)
+  expiresAt            DateTime
+  scannedAt            DateTime?
+  scannedByEmployeeId  Int?
+  otpHash              String?
+  otpEncrypted         String?
+  otpExpiresAt         DateTime?
+  otpAttempts          Int                     @default(0)
+  maxOtpAttempts       Int                     @default(3)
+  verifiedAt           DateTime?
+  redeemedAt           DateTime?
+  redeemedByEmployeeId Int?
+  createdAt            DateTime                @default(now())
+  updatedAt            DateTime                @updatedAt
+
+  customer           Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  customerVoucher    CustomerVoucher @relation(fields: [customerVoucherId], references: [id], onDelete: Cascade)
+  voucher            Voucher         @relation(fields: [voucherId], references: [id], onDelete: Cascade)
+  scannedByEmployee  Employee?       @relation("SessionScannedBy", fields: [scannedByEmployeeId], references: [id], onDelete: SetNull)
+  redeemedByEmployee Employee?       @relation("SessionRedeemedBy", fields: [redeemedByEmployeeId], references: [id], onDelete: SetNull)
+
+  @@index([sessionToken])
+  @@index([customerId, status])
+  @@index([customerVoucherId, status])
+  @@index([status, expiresAt])
+}
+
+model Benefit {
+  id           Int      @id @default(autoincrement())
+  title        String
+  description  String
+  imageUrl     String?
+  active       Boolean  @default(true)
+  displayOrder Int      @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([active, displayOrder])
+}
