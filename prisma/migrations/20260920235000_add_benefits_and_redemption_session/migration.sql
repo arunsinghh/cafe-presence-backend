@@ -1,4 +1,4 @@
-﻿-- CreateEnum
+-- CreateEnum
 CREATE TYPE "RedemptionSessionStatus" AS ENUM ('CREATED', 'SCANNED', 'OTP_VERIFIED', 'COMPLETED', 'EXPIRED', 'CANCELLED');
 
 -- AlterTable
