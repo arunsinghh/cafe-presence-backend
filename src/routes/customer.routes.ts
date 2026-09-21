@@ -29,6 +29,29 @@ const registerCustomerSchema = z.object({
     .or(z.literal(""))
 });
 
+const adminCreateCustomerSchema = z.object({
+  name: z
+    .string()
+    .trim()
+    .min(2, "Name must be at least 2 characters")
+    .max(100, "Name must be at most 100 characters"),
+  phone: z
+    .string()
+    .trim()
+    .min(7, "Phone number must be at least 7 digits")
+    .max(20, "Phone number must be at most 20 digits"),
+  email: z
+    .string()
+    .trim()
+    .email("Please provide a valid email address")
+    .optional()
+    .or(z.literal("")),
+  status: z
+    .enum([CustomerStatus.APPROVED, CustomerStatus.PENDING])
+    .optional()
+    .default(CustomerStatus.APPROVED)
+});
+
 const customerIdSchema = z.object({
   id: z.coerce.number().int().positive()
 });
@@ -294,6 +317,133 @@ router.get(
           }
         },
         "Customers retrieved successfully"
+      );
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+/**
+ * POST /
+ *
+ * Employee registers a new customer directly from Admin.
+ */
+router.post(
+  "/",
+  authenticateEmployee,
+  authorizePermission(Permission.CUSTOMER_MANAGE),
+  async (
+    req: AuthenticatedRequest,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
+    try {
+      if (!req.user) {
+        errorResponse(
+          res,
+          "Employee authentication required",
+          401
+        );
+        return;
+      }
+
+      const data = adminCreateCustomerSchema.parse(req.body);
+
+      const email =
+        data.email && data.email.length > 0
+          ? data.email
+          : undefined;
+
+      const existingCustomerByPhone =
+        await prisma.customer.findUnique({
+          where: {
+            phone: data.phone
+          }
+        });
+
+      if (existingCustomerByPhone) {
+        errorResponse(
+          res,
+          "This contact number is already registered.",
+          409
+        );
+        return;
+      }
+
+      if (email) {
+        const existingCustomerByEmail =
+          await prisma.customer.findUnique({
+            where: {
+              email
+            }
+          });
+
+        if (existingCustomerByEmail) {
+          errorResponse(
+            res,
+            "A customer with this email already exists",
+            409
+          );
+          return;
+        }
+      }
+
+      const status = data.status ?? CustomerStatus.APPROVED;
+      const approvedAt =
+        status === CustomerStatus.APPROVED ? new Date() : null;
+
+      const customer = await prisma.customer.create({
+        data: {
+          name: data.name,
+          phone: data.phone,
+          email,
+          status,
+          approvedAt
+        },
+        select: {
+          id: true,
+          name: true,
+          phone: true,
+          email: true,
+          status: true,
+          approvedAt: true,
+          rejectedAt: true,
+          createdAt: true,
+          updatedAt: true
+        }
+      });
+
+      await logAudit({
+        employeeId: req.user.id,
+        action: "CUSTOMER_CREATED",
+        entityType: "Customer",
+        entityId: String(customer.id),
+        details: {
+          customerId: customer.id,
+          name: customer.name,
+          phone: customer.phone,
+          status: customer.status
+        },
+        ipAddress: req.ip,
+        userAgent: req.get("user-agent")
+      });
+
+      const formattedCustomer = {
+        ...customer,
+        membership: "Classic Member",
+        membershipType: "Classic Member",
+        _count: {
+          customerVouchers: 0,
+          devices: 0
+        }
+      };
+
+      successResponse(
+        res,
+        formattedCustomer,
+        "Customer registered successfully",
+        201
       );
     } catch (error) {
       next(error);
